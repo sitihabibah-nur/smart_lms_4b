@@ -370,13 +370,23 @@
                 <div class="bg-white rounded-3xl p-3.5 border border-slate-100 shadow-sm space-y-2.5">
                     <div class="grid grid-cols-1 gap-2">
                         <div>
-                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Mata Pelajaran</label>
+                            <div class="flex items-center justify-between mb-1">
+                                <label class="block text-[10px] font-bold text-slate-400 uppercase">Mata Pelajaran</label>
+                                <button id="btn-toggle-add-mapel" type="button" onclick="toggleFormMapelBaru()" class="text-[10px] font-bold text-blue-600 hover:text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg transition">
+                                    <i class="fas fa-plus mr-0.5"></i> Mapel
+                                </button>
+                            </div>
                             <select id="filter-mapel-nilai" onchange="renderNilaiActiveView()" class="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-800">
                                 <option value="Matematika">Matematika</option>
                                 <option value="IPAS">IPAS (Ilmu Pengetahuan Alam & Sosial)</option>
                                 <option value="Bahasa Indonesia">Bahasa Indonesia</option>
                                 <option value="Pendidikan Pancasila">Pendidikan Pancasila</option>
                             </select>
+                            <!-- Form Tambah Mata Pelajaran Baru (Khusus Wali Kelas) -->
+                            <div id="box-add-mapel-baru" class="hidden mt-2 flex gap-1.5">
+                                <input type="text" id="input-mapel-baru" placeholder="Nama mapel baru (misal: PJOK)..." class="flex-1 text-[11px] bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-blue-500">
+                                <button type="button" onclick="tambahMataPelajaranBaru()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold rounded-xl shrink-0">Simpan</button>
+                            </div>
                         </div>
                     </div>
 
@@ -743,7 +753,8 @@
                 const json = await res.json();
                 if (json.status === 'success' && json.data) {
                     const d = json.data;
-                    if (Array.isArray(d.siswaList) && d.siswaList.length > 0) {
+                    // Sinkronkan penuh meski daftar di Google Sheets dikosongkan/dihapus
+                    if (Array.isArray(d.siswaList) && (d.siswaList.length > 0 || d.hasSheets)) {
                         siswaList.splice(0, siswaList.length, ...d.siswaList);
                     }
                     if (Array.isArray(d.catatanBkList)) {
@@ -753,7 +764,9 @@
                         pengajuanIzinList.splice(0, pengajuanIzinList.length, ...d.pengajuanIzinList);
                     }
                     if (d.tpMapelList && typeof d.tpMapelList === 'object') {
+                        Object.keys(tpMapelList).forEach(k => delete tpMapelList[k]);
                         Object.assign(tpMapelList, d.tpMapelList);
+                        renderMapelDropdown();
                     }
                     if (d.config) {
                         if (d.config.schoolLogoUrl) terapkanGambarLogo(d.config.schoolLogoUrl, false);
@@ -770,8 +783,13 @@
                             if (loginNameEl) loginNameEl.innerText = guruAuth.nama;
                         }
                     }
+                    // Perbarui backup lokal dengan data terbaru dari Google Sheets
+                    localStorage.setItem('lms_4b_backup_state', JSON.stringify({
+                        siswaList, catatanBkList, pengajuanIzinList, tpMapelList, guruAuth
+                    }));
+                    pulihkanSesiLoginJikaAda();
                     refreshAllViews();
-                    showToast('Google Sheets Sinkron', 'Data terbaru dari spreadsheet berhasil dimuat.');
+                    showToast('Google Sheets Sinkron', 'Data terbaru dari semua sheet berhasil dimuat.');
                 }
             } catch (err) {
                 console.warn('Gagal mengambil data dari GAS:', err);
@@ -808,12 +826,28 @@
         window.addEventListener('DOMContentLoaded', () => {
             try {
                 const savedLocal = JSON.parse(localStorage.getItem('lms_4b_backup_state') || '{}');
+                if (Array.isArray(savedLocal.siswaList)) {
+                    siswaList.splice(0, siswaList.length, ...savedLocal.siswaList);
+                }
+                if (Array.isArray(savedLocal.catatanBkList)) {
+                    catatanBkList.splice(0, catatanBkList.length, ...savedLocal.catatanBkList);
+                }
+                if (Array.isArray(savedLocal.pengajuanIzinList)) {
+                    pengajuanIzinList.splice(0, pengajuanIzinList.length, ...savedLocal.pengajuanIzinList);
+                }
+                if (savedLocal.tpMapelList && typeof savedLocal.tpMapelList === 'object') {
+                    Object.keys(tpMapelList).forEach(k => delete tpMapelList[k]);
+                    Object.assign(tpMapelList, savedLocal.tpMapelList);
+                    renderMapelDropdown();
+                }
                 if (savedLocal.guruAuth) {
                     Object.assign(guruAuth, savedLocal.guruAuth);
                     const loginNameEl = document.getElementById('login-guru-display-name');
                     if (loginNameEl) loginNameEl.innerText = guruAuth.nama;
                 }
             } catch (e) {}
+
+            pulihkanSesiLoginJikaAda();
 
             if (isGasConfigured()) {
                 muatDataDariGas();
@@ -937,31 +971,26 @@
                 asts: 74, asas: 76,
                 ekskulList: [{ nama: 'Pramuka (Wajib)', predikat: 'Baik' }],
                 literasiLevel: 'Dasar', numerasiLevel: 'Dasar', jumlahBuku: 5,
-                catatanLitNum: 'Disarankan membaca buku cerita bergambar 15 menit setiap hari bersama orang tua.'
-            },
-            {
-                id: 6, nisn: '0148291026', username: 'siswa1026', pin: '123456', nama: 'Nadia Safira Azzahra', ortu: 'Ibu Siti Aminah',
-                status: 'Belum Scan', waktuScan: '-', keteranganIzin: '',
-                tpScores: {
-                    'Matematika': [90, 91, 92],
-                    'IPAS': [89, 90, 91],
-                    'Bahasa Indonesia': [92, 93, 91],
-                    'Pendidikan Pancasila': [94, 92, 93]
-                },
-                asts: 90, asas: 93,
-                ekskulList: [{ nama: 'Pramuka (Wajib)', predikat: 'Sangat Baik' }, { nama: 'Tari Tradisional', predikat: 'Baik' }],
-                literasiLevel: 'Mahir', numerasiLevel: 'Cakap', jumlahBuku: 15,
-                catatanLitNum: 'Sangat gemar membaca dongeng nusantara dan aktif menceritakan kembali di depan kelas.'
+                catatanLitNum: 'Masih perlu bimbingan rutin membaca lancar setiap hari di rumah.'
             }
         ];
 
+        // Helper Format Tanggal Aktual (dd/MM/yyyy) agar identik dengan Google Sheets
+        function getTodayFormatted() {
+            const now = new Date();
+            const dd = String(now.getDate()).padStart(2, '0');
+            const mm = String(now.getMonth() + 1).padStart(2, '0');
+            const yyyy = now.getFullYear();
+            return `${dd}/${mm}/${yyyy}`;
+        }
+
         const pengajuanIzinList = [
-            { id: 101, siswaId: 5, siswaNama: 'Muhammad Rizky Pratama', ortuNama: 'Bp. Agus Setiawan', tanggal: 'Hari Ini', jenis: 'Sakit', alasan: 'Demam sejak tadi malam, surat dokter menyusul.', statusApproval: 'Diterima Sistem' }
+            { id: 101, siswaId: 5, siswaNama: 'Muhammad Rizky Pratama', ortuNama: 'Bp. Agus Setiawan', tanggal: getTodayFormatted(), jenis: 'Sakit', alasan: 'Demam sejak tadi malam, surat dokter menyusul.', statusApproval: 'Diterima Sistem' }
         ];
 
         const catatanBkList = [
-            { id: 1, siswa: 'Ahmad Fauzan Al-Ghifari', kategori: 'Prestasi & Positif', deskripsi: 'Membantu teman yang kesulitan memahami soal pecahan saat kerja kelompok.', tanggal: 'Hari Ini', shared: true },
-            { id: 2, siswa: 'Bima Sakti Nugraha', kategori: 'Pembinaan Ringan', deskripsi: 'Datang terlambat 7 menit, sudah diberikan nasihat untuk berangkat lebih awal.', tanggal: 'Hari Ini', shared: false }
+            { id: 1, siswa: 'Ahmad Fauzan Al-Ghifari', kategori: 'Prestasi & Positif', deskripsi: 'Membantu teman yang kesulitan memahami soal pecahan saat kerja kelompok.', tanggal: getTodayFormatted(), shared: true },
+            { id: 2, siswa: 'Bima Sakti Nugraha', kategori: 'Pembinaan Ringan', deskripsi: 'Datang terlambat 7 menit, sudah diberikan nasihat untuk berangkat lebih awal.', tanggal: getTodayFormatted(), shared: false }
         ];
 
         // Proses Login & Penyesuaian Hak Akses UI (RBAC)
@@ -994,12 +1023,37 @@
             }
 
             currentRole = role;
+            localStorage.setItem('lms_4b_active_session', JSON.stringify({ role, activeSiswaId }));
+            terapkanTampilanRole(role, true);
+        }
+
+        function pulihkanSesiLoginJikaAda() {
+            try {
+                const rawSession = localStorage.getItem('lms_4b_active_session');
+                if (!rawSession) return;
+                const sess = JSON.parse(rawSession);
+                if (sess && (sess.role === 'guru' || sess.role === 'ortu')) {
+                    if (sess.role === 'ortu') {
+                        const validSiswa = siswaList.find(s => s.id === sess.activeSiswaId) || siswaList[0];
+                        if (!validSiswa) {
+                            localStorage.removeItem('lms_4b_active_session');
+                            return;
+                        }
+                        activeSiswaId = validSiswa.id;
+                    }
+                    currentRole = sess.role;
+                    terapkanTampilanRole(sess.role, false);
+                }
+            } catch (e) {}
+        }
+
+        function terapkanTampilanRole(role, showWelcomeToast = false) {
             document.getElementById('login-screen').classList.add('hidden');
 
             const guruOnlyIds = [
                 'btn-akun-guru', 'grid-btn-siswa', 'guru-scan-panel', 'guru-kktp-panel',
-                'guru-nilai-harian-panel', 'guru-nilai-asts-panel', 'guru-nilai-asas-panel',
-                'guru-bk-form-panel', 'guru-ekskul-form-panel', 'guru-litnum-form-panel'
+                'btn-toggle-add-mapel', 'guru-nilai-harian-panel', 'guru-nilai-asts-panel',
+                'guru-nilai-asas-panel', 'guru-bk-form-panel', 'guru-ekskul-form-panel', 'guru-litnum-form-panel'
             ];
 
             guruOnlyIds.forEach(id => {
@@ -1025,9 +1079,10 @@
                 updateStatistikBerandaGuru();
                 document.getElementById('hero-action-btn').setAttribute('onclick', "switchTab('presensi')");
                 document.getElementById('hero-action-btn').innerHTML = '<i class="fas fa-qrcode text-xs"></i> Scan QR Sekarang';
-                showToast('Selamat Datang, Bu Siti!', 'Anda masuk dengan akses penuh Wali Kelas 4B.');
+                if (showWelcomeToast) showToast('Selamat Datang, Bu Siti!', 'Anda masuk dengan akses penuh Wali Kelas 4B.');
             } else {
                 const s = siswaList.find(item => item.id === activeSiswaId) || siswaList[0];
+                if (!s) return;
                 document.getElementById('hero-profile-img').src = `https://ui-avatars.com/api/?name=${encodeURIComponent(s.nama)}&background=059669&color=fff&size=128&bold=true`;
                 document.getElementById('btn-upload-foto-guru').classList.add('hidden');
                 document.getElementById('hero-badge').innerHTML = `<i class="fas fa-user-check text-[7px] text-emerald-300 mr-1"></i> Akun Orang Tua • ${s.ortu}`;
@@ -1036,10 +1091,10 @@
                 syncChildSummaryToHero();
                 document.getElementById('hero-action-btn').setAttribute('onclick', "switchTab('presensi')");
                 document.getElementById('hero-action-btn').innerHTML = '<i class="fas fa-envelope-open-text text-xs"></i> Ajukan Izin / Cek Kehadiran';
-                showToast(`Halo, ${s.ortu}!`, `Menampilkan portal belajar ${s.nama}.`);
+                if (showWelcomeToast) showToast(`Halo, ${s.ortu}!`, `Menampilkan portal belajar ${s.nama}.`);
             }
 
-            switchTab('beranda');
+            switchTab(currentTab || 'beranda');
             refreshAllViews();
         }
 
@@ -1122,6 +1177,7 @@
         }
 
         function logoutApp() {
+            localStorage.removeItem('lms_4b_active_session');
             document.getElementById('login-guru-password').value = '';
             const pinOrtuEl = document.getElementById('login-ortu-pin');
             if (pinOrtuEl) pinOrtuEl.value = '';
@@ -1362,7 +1418,7 @@
                 siswaId: s.id,
                 siswaNama: s.nama,
                 ortuNama: s.ortu,
-                tanggal: 'Hari Ini',
+                tanggal: getTodayFormatted(),
                 jenis: jenis,
                 alasan: alasan,
                 statusApproval: 'Diterima Sistem'
@@ -1596,6 +1652,7 @@
                 return;
             }
 
+            if (!tpMapelList[mapel]) tpMapelList[mapel] = [];
             tpMapelList[mapel].push(`TP ${tpMapelList[mapel].length + 1}: ${tpBaru}`);
             siswaList.forEach(s => {
                 if (!s.tpScores[mapel]) s.tpScores[mapel] = [];
@@ -1606,6 +1663,50 @@
             if (window.saveCloudState) window.saveCloudState();
             renderNilaiActiveView();
             showToast('TP Ditambahkan', `Tujuan Pembelajaran baru pada ${mapel} berhasil ditambahkan.`);
+        }
+
+        function toggleFormMapelBaru() {
+            const box = document.getElementById('box-add-mapel-baru');
+            if (box) box.classList.toggle('hidden');
+        }
+
+        function renderMapelDropdown(selectedVal = null) {
+            const selectEl = document.getElementById('filter-mapel-nilai');
+            if (!selectEl) return;
+            const currentVal = selectedVal || selectEl.value;
+            const mapelKeys = Object.keys(tpMapelList);
+            if (mapelKeys.length === 0) return;
+            selectEl.innerHTML = mapelKeys.map(m => `<option value="${m}">${m}</option>`).join('');
+            if (mapelKeys.includes(currentVal)) {
+                selectEl.value = currentVal;
+            }
+        }
+
+        function tambahMataPelajaranBaru() {
+            if (currentRole !== 'guru') return;
+            const inputEl = document.getElementById('input-mapel-baru');
+            const namaMapel = inputEl ? inputEl.value.trim() : '';
+            if (!namaMapel) {
+                showToast('Isi Nama Mapel', 'Tuliskan nama mata pelajaran baru terlebih dahulu.');
+                return;
+            }
+            if (tpMapelList[namaMapel]) {
+                showToast('Mapel Sudah Ada', `Mata pelajaran "${namaMapel}" sudah tersedia.`);
+                return;
+            }
+
+            tpMapelList[namaMapel] = ['TP 1: Capaian Kompetensi Dasar'];
+            siswaList.forEach(s => {
+                if (!s.tpScores) s.tpScores = {};
+                s.tpScores[namaMapel] = [80];
+            });
+
+            inputEl.value = '';
+            toggleFormMapelBaru();
+            renderMapelDropdown(namaMapel);
+            if (window.saveCloudState) window.saveCloudState();
+            renderNilaiActiveView();
+            showToast('Mapel Ditambahkan', `Mata pelajaran "${namaMapel}" berhasil ditambahkan ke semua siswa.`);
         }
 
         function loadNilaiSiswaToForm() {
@@ -1864,7 +1965,7 @@
             if (!deskripsi) return;
 
             catatanBkList.unshift({
-                id: Date.now(), siswa: s ? s.nama : 'Siswa 4B', kategori, deskripsi, tanggal: 'Baru saja', shared
+                id: Date.now(), siswa: s ? s.nama : 'Siswa 4B', kategori, deskripsi, tanggal: getTodayFormatted(), shared
             });
             document.getElementById('deskripsi-bk').value = '';
             if (window.saveCloudState) window.saveCloudState();
@@ -2038,6 +2139,7 @@
         }
 
         function refreshAllViews() {
+            renderMapelDropdown();
             populateStudentSelectors();
             renderPresensiList();
             renderRiwayatIzin();
